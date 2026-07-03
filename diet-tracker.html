@@ -119,7 +119,14 @@
   svg text{fill:var(--muted); font-size:10px;}
   .whoop-box{border:1px dashed var(--border); border-radius:10px; padding:14px; color:var(--muted); font-size:13.5px;}
   .whoop-box b{color:var(--text);}
-  @media(max-width:560px){ .grid4{grid-template-columns:1fr 1fr;} input,select{font-size:16px;} }
+  @media(max-width:560px){
+    .grid4{grid-template-columns:1fr 1fr;}
+    input,select{font-size:16px;}
+    .result{flex-wrap:wrap; row-gap:6px; padding:12px 2px;}
+    .result .info{flex:1 1 100%; min-width:0;}
+    .result .n100{margin-right:auto; text-align:left;}
+    .result .btn.small{padding:7px 12px;}
+  }
   #scanVideo{width:100%; border-radius:10px; overflow:hidden; background:#000; min-height:120px;}
   #scanVideo video{width:100% !important; border-radius:10px;}
 </style>
@@ -1034,6 +1041,23 @@ const SCAN_LIB = {
   sri: "sha256-ZgsSQ3sddH4+aLi+BoXAjLcoFAEQrSE/FnsUtm+LHY4="
 };
 let scanner=null, scanMode=null, scanLibP=null, lastHit={code:null,t:0}, scanCount=0;
+let beepCtx=null;
+function initBeep(){  // must be created during a user tap (iOS requirement)
+  try{
+    beepCtx = beepCtx || new (window.AudioContext||window.webkitAudioContext)();
+    if(beepCtx.state==="suspended") beepCtx.resume();
+  }catch(e){}
+}
+function beep(){
+  try{
+    if(!beepCtx) return;
+    const o=beepCtx.createOscillator(), g=beepCtx.createGain();
+    o.frequency.value=1250; o.connect(g); g.connect(beepCtx.destination);
+    g.gain.setValueAtTime(0.2, beepCtx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001, beepCtx.currentTime+0.15);
+    o.start(); o.stop(beepCtx.currentTime+0.16);
+  }catch(e){}
+}
 
 function loadScanLib(){
   if(window.Html5Qrcode) return Promise.resolve();
@@ -1047,6 +1071,7 @@ function loadScanLib(){
   return scanLibP;
 }
 async function openScanner(mode){
+  initBeep();
   scanMode = mode; scanCount = 0; lastHit = {code:null,t:0};
   document.getElementById("scanTitle").textContent = mode==="pantry" ? "Scan groceries into pantry" : "Scan a barcode";
   document.getElementById("scanSession").textContent = mode==="pantry" ? "Scan items one after another, then press Done." : "";
@@ -1056,8 +1081,16 @@ async function openScanner(mode){
   catch(e){ document.getElementById("scanStatus").textContent = "Couldn't load the scanner (offline?). Type the digits instead."; return; }
   try{
     const F = Html5QrcodeSupportedFormats;
-    scanner = new Html5Qrcode("scanVideo", { formatsToSupport:[F.EAN_13, F.EAN_8, F.UPC_A, F.UPC_E], verbose:false });
-    await scanner.start({facingMode:"environment"}, {fps:10, qrbox:{width:260, height:140}}, onScanHit, ()=>{});
+    scanner = new Html5Qrcode("scanVideo", {
+      formatsToSupport:[F.EAN_13, F.EAN_8, F.UPC_A, F.UPC_E],
+      verbose:false,
+      experimentalFeatures:{ useBarCodeDetectorIfSupported:true }
+    });
+    await scanner.start({facingMode:"environment"}, {
+      fps: 15,
+      qrbox: (vw, vh) => ({ width: Math.min(340, Math.floor(vw*0.85)), height: 170 }),
+      videoConstraints: { facingMode:"environment", width:{ideal:1920}, height:{ideal:1080} }
+    }, onScanHit, ()=>{});
     document.getElementById("scanStatus").textContent = "Point the camera at a barcode";
   }catch(e){
     document.getElementById("scanStatus").textContent = "Camera unavailable — allow camera access, or type the digits instead.";
@@ -1069,6 +1102,7 @@ async function onScanHit(text){
   const now = Date.now();
   if(text===lastHit.code && now-lastHit.t < 4000) return;   // same item within 4s: ignore
   lastHit = {code:text, t:now};
+  beep();
   if(navigator.vibrate) navigator.vibrate(80);
   const st = document.getElementById("scanStatus");
   if(scanMode==="search"){
@@ -1093,7 +1127,10 @@ async function closeScanner(){
   try{ if(scanner){ await scanner.stop(); scanner.clear(); } }catch(e){}
   scanner = null;
   document.getElementById("scanBg").classList.remove("open");
-  if(scanMode==="pantry") renderPantry();
+  if(scanMode==="pantry"){
+    renderPantry();
+    toast(scanCount>0 ? `${scanCount} item${scanCount!==1?"s":""} added to pantry` : "No barcodes captured — hold steady ~15 cm away, good light");
+  }
   scanMode = null;
 }
 
