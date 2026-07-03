@@ -134,7 +134,7 @@
 <body>
 <div class="app">
   <header>
-    <h1>Diet<span>Tracker</span> <span style="font-size:11px;color:var(--muted);font-weight:400">v1.2</span></h1>
+    <h1>Diet<span>Tracker</span> <span style="font-size:11px;color:var(--muted);font-weight:400">v1.3</span></h1>
     <span class="pill" id="goalPill"></span>
   </header>
 
@@ -323,7 +323,7 @@
     <div class="msub" id="scanStatus">Starting camera…</div>
     <div id="scanVideo"></div>
     <div class="note" id="scanSession"></div>
-    <button class="btn" style="width:100%;margin-top:12px" onclick="closeScanner()">Done</button>
+    <button class="btn ghost" style="width:100%;margin-top:12px" onclick="closeScanner()">Cancel</button>
   </div>
 </div>
 
@@ -1074,7 +1074,7 @@ async function openScanner(mode){
   initBeep();
   scanMode = mode; scanCount = 0; lastHit = {code:null,t:0};
   document.getElementById("scanTitle").textContent = mode==="pantry" ? "Scan groceries into pantry" : "Scan a barcode";
-  document.getElementById("scanSession").textContent = mode==="pantry" ? "Scan items one after another, then press Done." : "";
+  document.getElementById("scanSession").textContent = "Closes by itself the moment it reads a barcode.";
   document.getElementById("scanStatus").textContent = "Starting camera…";
   document.getElementById("scanBg").classList.add("open");
   try{ await loadScanLib(); }
@@ -1096,41 +1096,37 @@ async function openScanner(mode){
     document.getElementById("scanStatus").textContent = "Camera unavailable — allow camera access, or type the digits instead.";
   }
 }
+let scanBusy = false;
 async function onScanHit(text){
   text = String(text).trim();
   if(!/^\d{6,14}$/.test(text)) return;
-  const now = Date.now();
-  if(text===lastHit.code && now-lastHit.t < 4000) return;   // same item within 4s: ignore
-  lastHit = {code:text, t:now};
+  if(scanBusy) return;               // one capture per session
+  scanBusy = true;
   beep();
   if(navigator.vibrate) navigator.vibrate(80);
-  const st = document.getElementById("scanStatus");
-  if(scanMode==="search"){
+  const mode = scanMode;
+  await closeScanner();              // closing = "got it"
+  scanBusy = false;
+  if(mode==="search"){
     document.getElementById("searchInput").value = text;
-    await closeScanner();
     doSearch();
     return;
   }
-  st.textContent = `Looking up ${text}…`;
+  toast(`Captured ${text} — looking up…`);
   const f = await fetchBarcode(text);
   if(f){
     const id = persistFood(f);
     if(!S.pantry.includes(id)) S.pantry.unshift(id);
-    save(); scanCount++;
-    st.textContent = "✓ " + f.name;
-    document.getElementById("scanSession").innerHTML = `<b>${scanCount} added.</b> Keep scanning, or press Done.`;
+    save(); renderPantry();
+    toast("✓ " + f.name + " → pantry");
   } else {
-    st.textContent = `✗ ${text} not in database — add it as a custom food later`;
+    toast(`✗ ${text} not in database — add as custom food`);
   }
 }
 async function closeScanner(){
   try{ if(scanner){ await scanner.stop(); scanner.clear(); } }catch(e){}
   scanner = null;
   document.getElementById("scanBg").classList.remove("open");
-  if(scanMode==="pantry"){
-    renderPantry();
-    toast(scanCount>0 ? `${scanCount} item${scanCount!==1?"s":""} added to pantry` : "No barcodes captured — hold steady ~15 cm away, good light");
-  }
   scanMode = null;
 }
 
