@@ -144,7 +144,7 @@
 <body>
 <div class="app">
   <header>
-    <h1>Diet<span>Tracker</span> <span style="font-size:11px;color:var(--muted);font-weight:400">v2.2</span></h1>
+    <h1>Diet<span>Tracker</span> <span style="font-size:11px;color:var(--muted);font-weight:400">v2.3</span></h1>
     <span class="row" style="gap:6px"><span class="pill" id="syncBadge" style="display:none"></span><span class="pill" id="goalPill"></span></span>
   </header>
 
@@ -512,6 +512,23 @@ function targets(){
 // ============ FOOD SEARCH (Open Food Facts) ============
 let lastResults = {};   // temp id -> parsed product (from current search)
 
+// fetch with timeout + automatic retries (OFF's server is occasionally slow/flaky)
+async function fetchJSON(url, tries = 3){
+  for(let i = 0; i < tries; i++){
+    try{
+      const ctl = new AbortController();
+      const t = setTimeout(() => ctl.abort(), 8000);
+      const res = await fetch(url, { signal: ctl.signal });
+      clearTimeout(t);
+      if(!res.ok) throw new Error("http " + res.status);
+      return await res.json();
+    }catch(e){
+      if(i === tries - 1) throw e;
+      await new Promise(r => setTimeout(r, 600 * (i + 1)));
+    }
+  }
+}
+
 function parseProduct(p){
   const n = p.nutriments || {};
   let kcal = n["energy-kcal_100g"];
@@ -579,14 +596,12 @@ async function doSearch(){
       if(q.length === 12) codes.push("0"+q);
       else if(q.length === 13 && q[0] === "0") codes.push(q.slice(1));
       for(const code of codes){
-        const res = await fetch(`https://world.openfoodfacts.org/api/v2/product/${code}.json?fields=product_name,generic_name,brands,code,nutriments,serving_size,serving_quantity`);
-        const data = await res.json();
+        const data = await fetchJSON(`https://world.openfoodfacts.org/api/v2/product/${code}.json?fields=product_name,generic_name,brands,code,nutriments,serving_size,serving_quantity`);
         if(data.status === 1 && data.product){ products = [data.product]; break; }
       }
     } else {
       const url = `https://world.openfoodfacts.org/cgi/search.pl?search_terms=${encodeURIComponent(q)}&search_simple=1&action=process&json=1&page_size=20&fields=product_name,generic_name,brands,code,nutriments,serving_size,serving_quantity`;
-      const res = await fetch(url);
-      const data = await res.json();
+      const data = await fetchJSON(url);
       products = data.products || [];
     }
     lastResults = {};
@@ -604,7 +619,7 @@ async function doSearch(){
       </div>`;
     }).join("");
   }catch(e){
-    box.innerHTML = '<div class="empty">Search failed — check your internet connection.</div>';
+    box.innerHTML = '<div class="empty">The food database didn\'t respond after several tries — give it a moment and search again.</div>';
   }
 }
 
@@ -640,8 +655,7 @@ async function fetchBarcode(code){
   else if(code.length === 13 && code[0] === "0") codes.push(code.slice(1));
   for(const c of codes){
     try{
-      const res = await fetch(`https://world.openfoodfacts.org/api/v2/product/${c}.json?fields=product_name,generic_name,brands,code,nutriments,serving_size,serving_quantity`);
-      const data = await res.json();
+      const data = await fetchJSON(`https://world.openfoodfacts.org/api/v2/product/${c}.json?fields=product_name,generic_name,brands,code,nutriments,serving_size,serving_quantity`, 2);
       if(data.status === 1 && data.product){ const p = parseProduct(data.product); if(p) return p; }
     }catch(e){}
   }
@@ -904,7 +918,7 @@ async function recipeSearch(){
   box.innerHTML = html + '<div class="empty">Searching online…</div>';
   try{
     const url = `https://world.openfoodfacts.org/cgi/search.pl?search_terms=${encodeURIComponent(q)}&search_simple=1&action=process&json=1&page_size=10&fields=product_name,generic_name,brands,code,nutriments,serving_size,serving_quantity`;
-    const res = await fetch(url); const data = await res.json();
+    const data = await fetchJSON(url);
     const parsed = (data.products||[]).map(parseProduct).filter(Boolean);
     for(const f of parsed){ const tid = uid(); rcResults[tid] = {parsed:f}; html += rcResultRow(tid, f, false); }
     box.innerHTML = html || '<div class="empty">Nothing found.</div>';
