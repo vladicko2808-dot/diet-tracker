@@ -134,7 +134,7 @@
 <body>
 <div class="app">
   <header>
-    <h1>Diet<span>Tracker</span> <span style="font-size:11px;color:var(--muted);font-weight:400">v1.4</span></h1>
+    <h1>Diet<span>Tracker</span> <span style="font-size:11px;color:var(--muted);font-weight:400">v1.5</span></h1>
     <span class="pill" id="goalPill"></span>
   </header>
 
@@ -1016,14 +1016,15 @@ function saveSettings(){
   const ft = +document.getElementById("stHeightFt").value, inch = +document.getElementById("stHeightIn").value || 0;
   if(ft > 0) s.height = r1((ft*12 + inch) * 2.54);
   const wlb = +document.getElementById("stWeight").value;
-  if(wlb > 0) s.weight = r1(lb2kg(wlb));
+  if(wlb > 0){
+    s.weight = r1(lb2kg(wlb));
+    S.weights[todayStr()] = s.weight;   // settings weight counts as today's weigh-in
+  }
   s.activity = +document.getElementById("stActivity").value;
   s.goal = document.getElementById("stGoal").value;
   const gpl = +document.getElementById("stProtein").value;
   if(gpl > 0) s.proteinPerKg = gpl*LB;
   s.configured = true;
-  // seed today's weight if none logged yet
-  if(Object.keys(S.weights).length === 0) S.weights[todayStr()] = s.weight;
   save(); updateGoalPill(); updateTargetPreview();
   toast("Settings saved"); switchTab("today");
 }
