@@ -144,7 +144,7 @@
 <body>
 <div class="app">
   <header>
-    <h1>Diet<span>Tracker</span> <span style="font-size:11px;color:var(--muted);font-weight:400">v2.4</span></h1>
+    <h1>Diet<span>Tracker</span> <span style="font-size:11px;color:var(--muted);font-weight:400">v2.6</span></h1>
     <span class="row" style="gap:6px"><span class="pill" id="syncBadge" style="display:none"></span><span class="pill" id="goalPill"></span></span>
   </header>
 
@@ -210,6 +210,7 @@
     <div class="card">
       <h2>My recipes / meal preps</h2>
       <div id="recipeList"></div>
+      <div id="presetBox"></div>
     </div>
     <div class="card">
       <h2 id="recipeFormTitle">New recipe</h2>
@@ -415,9 +416,21 @@ let S = load();
 function load(){
   try{
     const raw = localStorage.getItem(LS_KEY);
-    if(raw){ return Object.assign(defaultState(), JSON.parse(raw)); }
+    if(raw){ return migrate(Object.assign(defaultState(), JSON.parse(raw))); }
   }catch(e){ console.error("load failed", e); }
   return defaultState();
+}
+// upgrade older saved data in place (e.g. staples saved before piece-counts existed)
+function migrate(st){
+  try{
+    for(const f of Object.values(st.foods||{})){
+      if(f.pieceG == null){
+        const b = BASICS.find(x => x.name === f.name || x.name.split(" (")[0] === f.name);
+        if(b && b.pieceG) f.pieceG = b.pieceG;
+      }
+    }
+  }catch(e){}
+  return st;
 }
 function save(){
   S._meta = { updatedAt: Date.now() };
@@ -626,9 +639,12 @@ async function doSearch(){
 }
 
 function persistFood(f){
-  // reuse if same barcode/name already saved
+  // reuse if same barcode/name already saved (and backfill piece weight if missing)
   for(const [id,ex] of Object.entries(S.foods)){
-    if((f.barcode && ex.barcode===f.barcode) || (ex.name===f.name && ex.brand===f.brand)) return id;
+    if((f.barcode && ex.barcode===f.barcode) || (ex.name===f.name && ex.brand===f.brand)){
+      if(f.pieceG && !ex.pieceG){ ex.pieceG = f.pieceG; save(); }
+      return id;
+    }
   }
   const id = uid(); S.foods[id] = f; save(); return id;
 }
@@ -1039,7 +1055,61 @@ function renderRecipes(){
   }).join("");
   renderDraftIngredients();
   renderRcChips();
+  renderPresets();
 }
+// ============ STARTER (PRESET) RECIPES ============
+const PRESET_FOODS = {
+  "Light mayo": {name:"Light mayo", brand:"staple", barcode:"", per100:{kcal:238,p:0.4,c:9.0,f:22.0}, serving:null, pieceG:15, source:"basic"},
+  "Lemon juice, fresh (1 = juice of a lemon)": {name:"Lemon juice, fresh (1 = juice of a lemon)", brand:"staple", barcode:"", per100:{kcal:22,p:0.4,c:6.9,f:0.2}, serving:null, pieceG:47, source:"basic"},
+  "Dill, fresh": {name:"Dill, fresh", brand:"staple", barcode:"", per100:{kcal:43,p:3.5,c:7.0,f:1.1}, serving:null, pieceG:null, source:"basic"}
+};
+const PRESET_RECIPES = [{
+  name: "Chicken salad (yogurt-dill)",
+  portions: 7,
+  cookedWeight: 0,
+  ingredients: [
+    {ref:"Chicken breast, raw (1 = fillet)", grams:1450},   // 5 breasts x 290 g
+    {ref:"Cucumber, raw", grams:600},                        // 3 cucumbers
+    {ref:"Greek yogurt, plain, nonfat", grams:1360},         // 8 x 170 g servings
+    {ref:"Light mayo", grams:70},                            // ~4.5 tbsp
+    {ref:"Lemon juice, fresh (1 = juice of a lemon)", grams:47},
+    {ref:"Dill, fresh", grams:10}
+  ]
+}];
+function presetFoodByRef(ref){
+  return BASICS.find(b => b.name === ref) || PRESET_FOODS[ref] || null;
+}
+function renderPresets(){
+  const box = document.getElementById("presetBox"); if(!box) return;
+  const have = new Set(Object.values(S.recipes).map(r => r.name));
+  const list = PRESET_RECIPES.filter(p => !have.has(p.name));
+  if(!list.length){ box.innerHTML = ""; return; }
+  box.innerHTML = '<div class="divider"></div><h2>Starter recipes <span class="sub">one tap to add, then edit freely</span></h2>' +
+    list.map(p => {
+      const idx = PRESET_RECIPES.indexOf(p);
+      const t = p.ingredients.reduce((a, ing) => {
+        const f = presetFoodByRef(ing.ref); if(!f) return a;
+        const k = ing.grams/100;
+        return {kcal:a.kcal + f.per100.kcal*k, p:a.p + f.per100.p*k};
+      }, {kcal:0, p:0});
+      return `<div class="result">
+        <div class="info"><div class="nm">${esc(p.name)}</div><div class="br">${p.portions} portions · ~${Math.round(t.kcal/p.portions)} kcal, ${Math.round(t.p/p.portions)} g protein per portion</div></div>
+        <button class="btn small" onclick="importPreset(${idx})">Add</button>
+      </div>`;
+    }).join("");
+}
+function importPreset(idx){
+  const p = PRESET_RECIPES[idx]; if(!p) return;
+  const ings = [];
+  for(const ing of p.ingredients){
+    const f = presetFoodByRef(ing.ref); if(!f) continue;
+    const id = persistFood({...f});
+    ings.push({foodId:id, grams:ing.grams});
+  }
+  S.recipes[uid()] = { name:p.name, portions:p.portions, cookedWeight:p.cookedWeight||0, ingredients:ings };
+  save(); renderRecipes(); toast("Recipe added — tap ✎ to tweak it");
+}
+
 function logRecipePrompt(id){
   const r = S.recipes[id];
   const pc = perCooked100(r);
@@ -1531,6 +1601,7 @@ async function toggleTorch(){
 
 // ============ INIT ============
 document.addEventListener("DOMContentLoaded", () => {
+  migrate(S);   // BASICS exists by now; backfills piece weights on older saved foods
   renderSettings();
   renderToday();
   initSync();
