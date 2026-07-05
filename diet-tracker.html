@@ -144,7 +144,7 @@
 <body>
 <div class="app">
   <header>
-    <h1>Diet<span>Tracker</span> <span style="font-size:11px;color:var(--muted);font-weight:400">v2.3</span></h1>
+    <h1>Diet<span>Tracker</span> <span style="font-size:11px;color:var(--muted);font-weight:400">v2.4</span></h1>
     <span class="row" style="gap:6px"><span class="pill" id="syncBadge" style="display:none"></span><span class="pill" id="goalPill"></span></span>
   </header>
 
@@ -325,6 +325,7 @@
     <div class="msub" id="modalSub"></div>
     <div class="field"><label id="modalAmountLabel">Amount (g)</label>
       <input id="modalAmount" type="number" min="0" step="1" onkeydown="if(event.key==='Enter')confirmModal()" oninput="updateModalPreview()">
+      <span class="note" id="modalUnitToggle" style="cursor:pointer;text-decoration:underline;display:none" onclick="toggleModalUnit()"></span>
     </div>
     <div class="preview" id="modalPreview"></div>
     <div class="row">
@@ -546,27 +547,28 @@ function parseProduct(p){
 }
 
 // ============ BASIC STAPLES (USDA per 100 g, raw unless noted) ============
+// 6th value = typical weight of ONE piece in grams (medium size) -> enables count-based logging
 const BASICS = [
-["Tomato, raw",18,0.9,3.9,0.2],["Cucumber, raw",15,0.7,3.6,0.1],["Carrot, raw",41,0.9,9.6,0.2],
-["Potato, raw",77,2.0,17.0,0.1],["Sweet potato, raw",86,1.6,20.1,0.1],["Onion, raw",40,1.1,9.3,0.1],
-["Garlic, raw",149,6.4,33.1,0.5],["Bell pepper, red, raw",31,1.0,6.0,0.3],["Broccoli, raw",34,2.8,6.6,0.4],
+["Tomato, raw",18,0.9,3.9,0.2,123],["Cucumber, raw",15,0.7,3.6,0.1,200],["Carrot, raw",41,0.9,9.6,0.2,61],
+["Potato, raw",77,2.0,17.0,0.1,213],["Sweet potato, raw",86,1.6,20.1,0.1,130],["Onion, raw",40,1.1,9.3,0.1,110],
+["Garlic, raw (1 = clove)",149,6.4,33.1,0.5,3],["Bell pepper, red, raw",31,1.0,6.0,0.3,119],["Broccoli, raw",34,2.8,6.6,0.4],
 ["Cauliflower, raw",25,1.9,5.0,0.3],["Spinach, raw",23,2.9,3.6,0.4],["Lettuce, raw",15,1.4,2.9,0.2],
-["Zucchini, raw",17,1.2,3.1,0.3],["Eggplant, raw",25,1.0,5.9,0.2],["Mushrooms, white, raw",22,3.1,3.3,0.3],
+["Zucchini, raw",17,1.2,3.1,0.3,196],["Eggplant, raw",25,1.0,5.9,0.2,450],["Mushrooms, white, raw",22,3.1,3.3,0.3,18],
 ["Cabbage, raw",25,1.3,5.8,0.1],["Kale, raw",35,2.9,4.4,1.5],["Green beans, raw",31,1.8,7.0,0.2],
-["Asparagus, raw",20,2.2,3.9,0.1],["Celery, raw",14,0.7,3.0,0.2],["Avocado, raw",160,2.0,8.5,14.7],
-["Banana, raw",89,1.1,22.8,0.3],["Apple, raw",52,0.3,13.8,0.2],["Orange, raw",47,0.9,11.8,0.1],
-["Strawberries, raw",32,0.7,7.7,0.3],["Blueberries, raw",57,0.7,14.5,0.3],["Grapes, raw",69,0.7,18.1,0.2],
-["Lemon, raw",29,1.1,9.3,0.3],["Chicken breast, raw",120,22.5,0,2.6],["Chicken thigh, boneless skinless, raw",144,18.6,0,7.9],
+["Asparagus, raw (1 = spear)",20,2.2,3.9,0.1,16],["Celery, raw (1 = stalk)",14,0.7,3.0,0.2,40],["Avocado, raw",160,2.0,8.5,14.7,136],
+["Banana, raw",89,1.1,22.8,0.3,118],["Apple, raw",52,0.3,13.8,0.2,182],["Orange, raw",47,0.9,11.8,0.1,131],
+["Strawberries, raw",32,0.7,7.7,0.3,12],["Blueberries, raw",57,0.7,14.5,0.3],["Grapes, raw",69,0.7,18.1,0.2],
+["Lemon, raw",29,1.1,9.3,0.3,58],["Chicken breast, raw (1 = fillet)",120,22.5,0,2.6,174],["Chicken thigh, boneless skinless, raw",144,18.6,0,7.9,116],
 ["Ground beef 90/10, raw",176,20.0,0,10.0],["Beef steak, lean, raw",150,22.0,0,7.0],["Pork loin, raw",143,21.0,0,5.9],
-["Salmon, raw",208,20.4,0,13.4],["Tuna, canned in water",116,25.5,0,0.8],["Shrimp, raw",85,20.1,0.2,0.5],
-["Egg, whole, raw",143,12.6,0.7,9.5],["Egg white, raw",52,10.9,0.7,0.2],["White rice, dry",365,7.1,80.0,0.7],
+["Salmon, raw (1 = fillet)",208,20.4,0,13.4,170],["Tuna, canned in water (1 = can, drained)",116,25.5,0,0.8,120],["Shrimp, raw",85,20.1,0.2,0.5,7],
+["Egg, whole, raw",143,12.6,0.7,9.5,50],["Egg white, raw (1 = white)",52,10.9,0.7,0.2,33],["White rice, dry",365,7.1,80.0,0.7],
 ["White rice, cooked",130,2.7,28.2,0.3],["Brown rice, cooked",112,2.3,23.5,0.8],["Pasta, dry",371,13.0,74.7,1.5],
-["Oats, dry",389,16.9,66.3,6.9],["Bread, white",265,9.0,49.0,3.2],["Olive oil",884,0,0,100],
-["Butter",717,0.9,0.1,81.1],["Milk, whole",61,3.2,4.8,3.3],["Greek yogurt, plain, nonfat",59,10.2,3.6,0.4],
-["Cottage cheese",98,11.1,3.4,4.3],["Cheddar cheese",403,24.9,1.3,33.1],["Mozzarella",280,27.5,3.1,17.1],
+["Oats, dry",389,16.9,66.3,6.9],["Bread, white (1 = slice)",265,9.0,49.0,3.2,25],["Olive oil (1 = tbsp)",884,0,0,100,14],
+["Butter (1 = tbsp)",717,0.9,0.1,81.1,14],["Milk, whole",61,3.2,4.8,3.3],["Greek yogurt, plain, nonfat",59,10.2,3.6,0.4],
+["Cottage cheese",98,11.1,3.4,4.3],["Cheddar cheese (1 = slice)",403,24.9,1.3,33.1,28],["Mozzarella",280,27.5,3.1,17.1],
 ["Lentils, cooked",116,9.0,20.1,0.4],["Chickpeas, cooked",164,8.9,27.4,2.6],["Black beans, cooked",132,8.9,23.7,0.5],
-["Tofu, firm",76,8.0,1.9,4.8],["Almonds",579,21.2,21.6,49.9],["Peanut butter",588,25.1,19.6,50.4],["Honey",304,0.3,82.4,0]
-].map(b => ({ name:b[0], brand:"staple", barcode:"", per100:{kcal:b[1], p:b[2], c:b[3], f:b[4]}, serving:null, source:"basic" }));
+["Tofu, firm",76,8.0,1.9,4.8],["Almonds (1 = nut)",579,21.2,21.6,49.9,1.2],["Peanut butter (1 = tbsp)",588,25.1,19.6,50.4,16],["Honey (1 = tbsp)",304,0.3,82.4,0,21]
+].map(b => ({ name:b[0], brand:"staple", barcode:"", per100:{kcal:b[1], p:b[2], c:b[3], f:b[4]}, serving:null, pieceG:b[5]||null, source:"basic" }));
 
 function basicMatches(q){
   q = q.toLowerCase();
@@ -644,7 +646,8 @@ function pantryResult(tid){
 }
 function logResult(tid){
   const f = lastResults[tid]; if(!f) return;
-  openAmountModal({ name:f.name, sub:servSub(f), per:f.per100, unit:"g", def:defAmount(f),
+  openAmountModal({ name:f.name, sub:servSub(f), per:f.per100,
+    unit: f.pieceG ? "pc" : "g", def: f.pieceG ? 1 : defAmount(f), pieceG: f.pieceG||null,
     onConfirm: g => { const id = persistFood(f); logFood(id, g); } });
 }
 
@@ -748,7 +751,9 @@ function renderMyFoods(){
 }
 function logSavedFood(id){
   const f = S.foods[id];
-  openAmountModal({ name:f.name, sub:servSub(f), per:f.per100, unit:"g", def:defAmount(f), onConfirm: g => logFood(id, g) });
+  openAmountModal({ name:f.name, sub:servSub(f), per:f.per100,
+    unit: f.pieceG ? "pc" : "g", def: f.pieceG ? 1 : defAmount(f), pieceG: f.pieceG||null,
+    onConfirm: g => logFood(id, g) });
 }
 
 // ============ LOGGING ============
@@ -835,21 +840,41 @@ function closeQuickAdd(){ qaEditIdx = null; document.getElementById("qaBg").clas
 
 // ============ AMOUNT MODAL ============
 let modalCtx = null;
+function modalLabels(){
+  const c = modalCtx;
+  document.getElementById("modalAmountLabel").textContent =
+    c.unit==="portion" ? "Portions" :
+    c.unit==="pc" ? `How many? (1 ≈ ${c.pieceG} g)` : "Amount (g)";
+  const tog = document.getElementById("modalUnitToggle");
+  if(c.pieceG){
+    tog.style.display = "";
+    tog.textContent = c.unit==="pc" ? "enter grams instead" : "enter count instead";
+  } else tog.style.display = "none";
+}
 function openAmountModal(ctx){
   modalCtx = ctx;
   document.getElementById("modalTitle").textContent = ctx.name;
   document.getElementById("modalSub").textContent = ctx.sub || "";
-  document.getElementById("modalAmountLabel").textContent = ctx.unit==="portion" ? "Portions" : "Amount (g)";
   const inp = document.getElementById("modalAmount");
-  inp.value = ctx.def; inp.step = ctx.unit==="portion" ? "0.5" : "1";
+  inp.value = ctx.def; inp.step = (ctx.unit==="portion"||ctx.unit==="pc") ? "0.5" : "1";
+  modalLabels();
   updateModalPreview();
   document.getElementById("modalBg").classList.add("open");
   setTimeout(()=>{ inp.focus(); inp.select(); }, 50);
 }
+function toggleModalUnit(){
+  const c = modalCtx; if(!c || !c.pieceG) return;
+  const inp = document.getElementById("modalAmount");
+  if(c.unit==="pc"){ c.unit = "g"; inp.value = Math.round((+inp.value||1) * c.pieceG); inp.step = "1"; }
+  else { c.unit = "pc"; inp.value = Math.max(0.5, Math.round(((+inp.value||c.pieceG) / c.pieceG)*2)/2); inp.step = "0.5"; }
+  modalLabels(); updateModalPreview();
+  inp.focus(); inp.select();
+}
 function updateModalPreview(){
   if(!modalCtx) return;
   const amt = +document.getElementById("modalAmount").value || 0;
-  const k = modalCtx.unit==="portion" ? amt : amt/100;
+  const k = modalCtx.unit==="portion" ? amt :
+            modalCtx.unit==="pc" ? amt*modalCtx.pieceG/100 : amt/100;
   const per = modalCtx.per;
   document.getElementById("modalPreview").innerHTML =
     `= <b>${Math.round(per.kcal*k)} kcal</b> · P ${r1(per.p*k)} · C ${r1(per.c*k)} · F ${r1(per.f*k)} g`;
@@ -858,7 +883,8 @@ function confirmModal(){
   const amt = +document.getElementById("modalAmount").value;
   if(!(amt>0)){ toast("Enter an amount"); return; }
   const fn = modalCtx.onConfirm;
-  closeModal(); fn(amt);
+  const final = modalCtx.unit==="pc" ? amt*modalCtx.pieceG : amt;  // pc converts to grams
+  closeModal(); fn(final);
 }
 function closeModal(){ modalCtx=null; document.getElementById("modalBg").classList.remove("open"); }
 
@@ -937,7 +963,8 @@ function renderRcChips(){
 }
 function rcAddSaved(id){
   const f = S.foods[id];
-  openAmountModal({ name:f.name, sub:"How much goes in the batch? "+(f.serving?`(1 serving = ${f.serving.qty} g)`:""), per:f.per100, unit:"g", def:defAmount(f),
+  openAmountModal({ name:f.name, sub:"How much goes in the batch? "+(f.serving?`(1 serving = ${f.serving.qty} g)`:""), per:f.per100,
+    unit: f.pieceG ? "pc" : "g", def: f.pieceG ? 1 : defAmount(f), pieceG: f.pieceG||null,
     onConfirm: g => { (S.used = S.used||{})[id] = Date.now(); rcDraft.ingredients.push({foodId:id, grams:Math.round(g)}); renderDraftIngredients(); }});
 }
 function rcResultRow(tid, f, saved){
@@ -951,7 +978,8 @@ function rcAdd(tid){
   const r = rcResults[tid]; if(!r) return;
   const foodId = r.saved || persistFood(r.parsed);
   const f = S.foods[foodId];
-  openAmountModal({ name:f.name, sub:"How much goes in the batch? "+(f.serving?`(1 serving = ${f.serving.qty} g)`:""), per:f.per100, unit:"g", def:defAmount(f),
+  openAmountModal({ name:f.name, sub:"How much goes in the batch? "+(f.serving?`(1 serving = ${f.serving.qty} g)`:""), per:f.per100,
+    unit: f.pieceG ? "pc" : "g", def: f.pieceG ? 1 : defAmount(f), pieceG: f.pieceG||null,
     onConfirm: g => {
       rcDraft.ingredients.push({foodId, grams:Math.round(g)});
       document.getElementById("rcSearchResults").innerHTML = "";
