@@ -144,7 +144,7 @@
 <body>
 <div class="app">
   <header>
-    <h1>Diet<span>Tracker</span> <span style="font-size:11px;color:var(--muted);font-weight:400">v2.8</span></h1>
+    <h1>Diet<span>Tracker</span> <span style="font-size:11px;color:var(--muted);font-weight:400">v2.9</span></h1>
     <span class="row" style="gap:6px"><span class="pill" id="syncBadge" style="display:none"></span><span class="pill" id="goalPill"></span></span>
   </header>
 
@@ -215,6 +215,12 @@
       <h2>My recipes / meal preps</h2>
       <div id="recipeList"></div>
       <div id="presetBox"></div>
+      <div class="divider"></div>
+      <div class="row">
+        <input id="rcImport" class="grow" placeholder="Paste a shared recipe code…">
+        <button class="btn ghost small" onclick="importRecipeCode()">Import</button>
+      </div>
+      <div class="note">Share any recipe with the ⤴ button — it copies a code you can text to someone; they paste it here.</div>
     </div>
     <div class="card">
       <h2 id="recipeFormTitle">New recipe</h2>
@@ -1056,6 +1062,7 @@ function renderRecipes(){
     return `<div class="result">
       <div class="info"><div class="nm">${esc(r.name)}</div><div class="br">${r.portions} portions · ${r.ingredients.length} ingredients</div></div>
       <div class="n100">${pp.kcal} kcal<br>P${pp.p} C${pp.c} F${pp.f} /portion</div>
+      <button class="icon-btn" title="Share" onclick="shareRecipe('${id}')">⤴</button>
       <button class="icon-btn" title="Edit" onclick="editRecipe('${id}')">✎</button>
       <button class="icon-btn" title="Delete" onclick="deleteRecipe('${id}')">✕</button>
       <button class="btn small" onclick="logRecipePrompt('${id}')">Log</button>
@@ -1065,6 +1072,38 @@ function renderRecipes(){
   renderRcChips();
   renderPresets();
 }
+// ============ RECIPE SHARING ============
+function shareRecipe(id){
+  const r = S.recipes[id]; if(!r) return;
+  const payload = { n:r.name, p:r.portions, cw:r.cookedWeight||0,
+    ing: r.ingredients.map(i => {
+      const f = S.foods[i.foodId] || {};
+      return { g:i.grams, f:{ name:f.name, brand:f.brand||"", per100:f.per100, pieceG:f.pieceG||null, liquid:!!f.liquid } };
+    }) };
+  const code = "DTR1." + btoa(unescape(encodeURIComponent(JSON.stringify(payload))));
+  const done = () => toast("Recipe code copied — text it over, they paste it in Import");
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(code).then(done, () => prompt("Copy this code:", code));
+  } else prompt("Copy this code:", code);
+}
+function importRecipeCode(){
+  const raw = (document.getElementById("rcImport").value || "").trim();
+  if(!raw.startsWith("DTR1.")){ toast("That doesn't look like a recipe code"); return; }
+  try{
+    const p = JSON.parse(decodeURIComponent(escape(atob(raw.slice(5)))));
+    const ings = [];
+    for(const i of (p.ing||[])){
+      if(!i.f || !i.f.per100) continue;
+      const fid = persistFood({ name:i.f.name||"Shared food", brand:i.f.brand||"shared", barcode:"", per100:i.f.per100, serving:null, pieceG:i.f.pieceG||null, liquid:!!i.f.liquid, source:"custom" });
+      ings.push({ foodId:fid, grams:i.g });
+    }
+    if(!ings.length) throw new Error("empty");
+    S.recipes[uid()] = { name:p.n||"Shared recipe", portions:p.p||1, cookedWeight:p.cw||0, ingredients:ings };
+    document.getElementById("rcImport").value = "";
+    save(); renderRecipes(); toast("Recipe imported");
+  }catch(e){ toast("Couldn't read that code — make sure it was copied whole"); }
+}
+
 // ============ STARTER (PRESET) RECIPES ============
 const PRESET_FOODS = {
   "Light mayo": {name:"Light mayo", brand:"staple", barcode:"", per100:{kcal:238,p:0.4,c:9.0,f:22.0}, serving:null, pieceG:15, source:"basic"},
