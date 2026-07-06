@@ -144,7 +144,7 @@
 <body>
 <div class="app">
   <header>
-    <h1>Diet<span>Tracker</span> <span style="font-size:11px;color:var(--muted);font-weight:400">v2.6</span></h1>
+    <h1>Diet<span>Tracker</span> <span style="font-size:11px;color:var(--muted);font-weight:400">v2.8</span></h1>
     <span class="row" style="gap:6px"><span class="pill" id="syncBadge" style="display:none"></span><span class="pill" id="goalPill"></span></span>
   </header>
 
@@ -200,6 +200,10 @@
         <div class="field"><label>Protein g</label><input id="cfP" type="number" min="0" step="0.1"></div>
         <div class="field"><label>Carbs g</label><input id="cfC" type="number" min="0" step="0.1"></div>
         <div class="field"><label>Fat g</label><input id="cfF" type="number" min="0" step="0.1"></div>
+      </div>
+      <div class="grid2">
+        <div class="field"><label>1 piece weighs (g, optional — enables counting)</label><input id="cfPiece" type="number" min="0" step="0.1" placeholder="e.g. 25 for a slice"></div>
+        <div class="field"><label>Type</label><select id="cfLiquid"><option value="">Solid (per 100 g)</option><option value="1">Drink (per 100 ml)</option></select></div>
       </div>
       <button class="btn" onclick="createCustomFood()">Save food</button>
     </div>
@@ -555,6 +559,7 @@ function parseProduct(p){
     barcode: p.code || "",
     per100: { kcal: Math.round(kcal), p: r1(n.proteins_100g||0), c: r1(n.carbohydrates_100g||0), f: r1(n.fat_100g||0) },
     serving: (sq > 0) ? { label: (p.serving_size||"").trim() || sq+" g", qty: sq } : null,
+    liquid: String(p.nutrition_data_per||"").includes("ml"),
     source: "off"
   };
 }
@@ -570,7 +575,7 @@ const BASICS = [
 ["Cabbage, raw",25,1.3,5.8,0.1],["Kale, raw",35,2.9,4.4,1.5],["Green beans, raw",31,1.8,7.0,0.2],
 ["Asparagus, raw (1 = spear)",20,2.2,3.9,0.1,16],["Celery, raw (1 = stalk)",14,0.7,3.0,0.2,40],["Avocado, raw",160,2.0,8.5,14.7,136],
 ["Banana, raw",89,1.1,22.8,0.3,118],["Apple, raw",52,0.3,13.8,0.2,182],["Orange, raw",47,0.9,11.8,0.1,131],
-["Strawberries, raw",32,0.7,7.7,0.3,12],["Blueberries, raw",57,0.7,14.5,0.3],["Grapes, raw",69,0.7,18.1,0.2],
+["Strawberries, raw",32,0.7,7.7,0.3,12],["Blueberries, raw",57,0.7,14.5,0.3,1.5],["Grapes, raw",69,0.7,18.1,0.2,5],
 ["Lemon, raw",29,1.1,9.3,0.3,58],["Chicken breast, raw (1 = fillet)",120,22.5,0,2.6,174],["Chicken thigh, boneless skinless, raw",144,18.6,0,7.9,116],
 ["Ground beef 90/10, raw",176,20.0,0,10.0],["Beef steak, lean, raw",150,22.0,0,7.0],["Pork loin, raw",143,21.0,0,5.9],
 ["Salmon, raw (1 = fillet)",208,20.4,0,13.4,170],["Tuna, canned in water (1 = can, drained)",116,25.5,0,0.8,120],["Shrimp, raw",85,20.1,0.2,0.5,7],
@@ -594,7 +599,7 @@ function servLine(f){
     const k = f.serving.qty/100;
     return `<b>${Math.round(f.per100.kcal*k)}</b> kcal / serving<br>P${r1(f.per100.p*k)} C${r1(f.per100.c*k)} F${r1(f.per100.f*k)} · ${esc(f.serving.label)}`;
   }
-  return `${f.per100.kcal} kcal<br>P${f.per100.p} C${f.per100.c} F${f.per100.f} /100g`;
+  return `${f.per100.kcal} kcal<br>P${f.per100.p} C${f.per100.c} F${f.per100.f} /100${f.liquid?"ml":"g"}`;
 }
 function defAmount(f){ return (f.serving && f.serving.qty) ? f.serving.qty : 100; }
 function servSub(f){ return f.serving ? `1 serving = ${esc(f.serving.label)} (${f.serving.qty} g)` : (f.brand || "per 100 g"); }
@@ -611,11 +616,11 @@ async function doSearch(){
       if(q.length === 12) codes.push("0"+q);
       else if(q.length === 13 && q[0] === "0") codes.push(q.slice(1));
       for(const code of codes){
-        const data = await fetchJSON(`https://world.openfoodfacts.org/api/v2/product/${code}.json?fields=product_name,generic_name,brands,code,nutriments,serving_size,serving_quantity`);
+        const data = await fetchJSON(`https://world.openfoodfacts.org/api/v2/product/${code}.json?fields=product_name,generic_name,brands,code,nutriments,serving_size,serving_quantity,nutrition_data_per`);
         if(data.status === 1 && data.product){ products = [data.product]; break; }
       }
     } else {
-      const url = `https://world.openfoodfacts.org/cgi/search.pl?search_terms=${encodeURIComponent(q)}&search_simple=1&action=process&json=1&page_size=20&fields=product_name,generic_name,brands,code,nutriments,serving_size,serving_quantity`;
+      const url = `https://world.openfoodfacts.org/cgi/search.pl?search_terms=${encodeURIComponent(q)}&search_simple=1&action=process&json=1&page_size=20&fields=product_name,generic_name,brands,code,nutriments,serving_size,serving_quantity,nutrition_data_per`;
       const data = await fetchJSON(url);
       products = data.products || [];
     }
@@ -662,7 +667,7 @@ function pantryResult(tid){
 }
 function logResult(tid){
   const f = lastResults[tid]; if(!f) return;
-  openAmountModal({ name:f.name, sub:servSub(f), per:f.per100,
+  openAmountModal({ name:f.name, sub:servSub(f), per:f.per100, liquid:f.liquid||false,
     unit: f.pieceG ? "pc" : "g", def: f.pieceG ? 1 : defAmount(f), pieceG: f.pieceG||null,
     onConfirm: g => { const id = persistFood(f); logFood(id, g); } });
 }
@@ -674,7 +679,7 @@ async function fetchBarcode(code){
   else if(code.length === 13 && code[0] === "0") codes.push(code.slice(1));
   for(const c of codes){
     try{
-      const data = await fetchJSON(`https://world.openfoodfacts.org/api/v2/product/${c}.json?fields=product_name,generic_name,brands,code,nutriments,serving_size,serving_quantity`, 2);
+      const data = await fetchJSON(`https://world.openfoodfacts.org/api/v2/product/${c}.json?fields=product_name,generic_name,brands,code,nutriments,serving_size,serving_quantity,nutrition_data_per`, 2);
       if(data.status === 1 && data.product){ const p = parseProduct(data.product); if(p) return p; }
     }catch(e){}
   }
@@ -730,9 +735,11 @@ function createCustomFood(){
   const kcal = +document.getElementById("cfKcal").value;
   const p = +document.getElementById("cfP").value||0, c = +document.getElementById("cfC").value||0, f = +document.getElementById("cfF").value||0;
   if(!name || !(kcal>=0)){ toast("Name and kcal required"); return; }
-  S.foods[uid()] = { name, brand:"custom", barcode:"", per100:{kcal:Math.round(kcal), p:r1(p), c:r1(c), f:r1(f)}, source:"custom" };
+  const pieceG = +document.getElementById("cfPiece").value || null;
+  const liquid = !!document.getElementById("cfLiquid").value;
+  S.foods[uid()] = { name, brand:"custom", barcode:"", per100:{kcal:Math.round(kcal), p:r1(p), c:r1(c), f:r1(f)}, pieceG, liquid, source:"custom" };
   save();
-  ["cfName","cfKcal","cfP","cfC","cfF"].forEach(i=>document.getElementById(i).value="");
+  ["cfName","cfKcal","cfP","cfC","cfF","cfPiece","cfLiquid"].forEach(i=>document.getElementById(i).value="");
   renderMyFoods(); toast("Food saved");
 }
 function deleteFood(id){
@@ -767,7 +774,7 @@ function renderMyFoods(){
 }
 function logSavedFood(id){
   const f = S.foods[id];
-  openAmountModal({ name:f.name, sub:servSub(f), per:f.per100,
+  openAmountModal({ name:f.name, sub:servSub(f), per:f.per100, liquid:f.liquid||false,
     unit: f.pieceG ? "pc" : "g", def: f.pieceG ? 1 : defAmount(f), pieceG: f.pieceG||null,
     onConfirm: g => logFood(id, g) });
 }
@@ -858,13 +865,14 @@ function closeQuickAdd(){ qaEditIdx = null; document.getElementById("qaBg").clas
 let modalCtx = null;
 function modalLabels(){
   const c = modalCtx;
+  const baseUnit = c.liquid ? "ml" : "g";
   document.getElementById("modalAmountLabel").textContent =
     c.unit==="portion" ? "Portions" :
-    c.unit==="pc" ? `How many? (1 ≈ ${c.pieceG} g)` : "Amount (g)";
+    c.unit==="pc" ? `How many? (1 ≈ ${c.pieceG} ${baseUnit})` : `Amount (${baseUnit})`;
   const tog = document.getElementById("modalUnitToggle");
   if(c.pieceG){
     tog.style.display = "";
-    tog.textContent = c.unit==="pc" ? "enter grams instead" : "enter count instead";
+    tog.textContent = c.unit==="pc" ? `enter ${baseUnit} instead` : "enter count instead";
   } else tog.style.display = "none";
 }
 function openAmountModal(ctx){
@@ -959,7 +967,7 @@ async function recipeSearch(){
   }
   box.innerHTML = html + '<div class="empty">Searching online…</div>';
   try{
-    const url = `https://world.openfoodfacts.org/cgi/search.pl?search_terms=${encodeURIComponent(q)}&search_simple=1&action=process&json=1&page_size=10&fields=product_name,generic_name,brands,code,nutriments,serving_size,serving_quantity`;
+    const url = `https://world.openfoodfacts.org/cgi/search.pl?search_terms=${encodeURIComponent(q)}&search_simple=1&action=process&json=1&page_size=10&fields=product_name,generic_name,brands,code,nutriments,serving_size,serving_quantity,nutrition_data_per`;
     const data = await fetchJSON(url);
     const parsed = (data.products||[]).map(parseProduct).filter(Boolean);
     for(const f of parsed){ const tid = uid(); rcResults[tid] = {parsed:f}; html += rcResultRow(tid, f, false); }
@@ -979,7 +987,7 @@ function renderRcChips(){
 }
 function rcAddSaved(id){
   const f = S.foods[id];
-  openAmountModal({ name:f.name, sub:"How much goes in the batch? "+(f.serving?`(1 serving = ${f.serving.qty} g)`:""), per:f.per100,
+  openAmountModal({ name:f.name, sub:"How much goes in the batch? "+(f.serving?`(1 serving = ${f.serving.qty} g)`:""), per:f.per100, liquid:f.liquid||false,
     unit: f.pieceG ? "pc" : "g", def: f.pieceG ? 1 : defAmount(f), pieceG: f.pieceG||null,
     onConfirm: g => { (S.used = S.used||{})[id] = Date.now(); rcDraft.ingredients.push({foodId:id, grams:Math.round(g)}); renderDraftIngredients(); }});
 }
@@ -994,7 +1002,7 @@ function rcAdd(tid){
   const r = rcResults[tid]; if(!r) return;
   const foodId = r.saved || persistFood(r.parsed);
   const f = S.foods[foodId];
-  openAmountModal({ name:f.name, sub:"How much goes in the batch? "+(f.serving?`(1 serving = ${f.serving.qty} g)`:""), per:f.per100,
+  openAmountModal({ name:f.name, sub:"How much goes in the batch? "+(f.serving?`(1 serving = ${f.serving.qty} g)`:""), per:f.per100, liquid:f.liquid||false,
     unit: f.pieceG ? "pc" : "g", def: f.pieceG ? 1 : defAmount(f), pieceG: f.pieceG||null,
     onConfirm: g => {
       rcDraft.ingredients.push({foodId, grams:Math.round(g)});
@@ -1061,7 +1069,11 @@ function renderRecipes(){
 const PRESET_FOODS = {
   "Light mayo": {name:"Light mayo", brand:"staple", barcode:"", per100:{kcal:238,p:0.4,c:9.0,f:22.0}, serving:null, pieceG:15, source:"basic"},
   "Lemon juice, fresh (1 = juice of a lemon)": {name:"Lemon juice, fresh (1 = juice of a lemon)", brand:"staple", barcode:"", per100:{kcal:22,p:0.4,c:6.9,f:0.2}, serving:null, pieceG:47, source:"basic"},
-  "Dill, fresh": {name:"Dill, fresh", brand:"staple", barcode:"", per100:{kcal:43,p:3.5,c:7.0,f:1.1}, serving:null, pieceG:null, source:"basic"}
+  "Dill, fresh": {name:"Dill, fresh", brand:"staple", barcode:"", per100:{kcal:43,p:3.5,c:7.0,f:1.1}, serving:null, pieceG:null, source:"basic"},
+  "Ground beef 96/4, raw": {name:"Ground beef 96/4, raw", brand:"staple", barcode:"", per100:{kcal:134,p:22.0,c:0,f:4.5}, serving:null, pieceG:null, source:"basic"},
+  "Mozzarella, low-moisture part-skim, shredded": {name:"Mozzarella, low-moisture part-skim, shredded", brand:"staple", barcode:"", per100:{kcal:286,p:21.4,c:3.6,f:21.4}, serving:null, pieceG:null, source:"basic"},
+  "Flour tortilla, burrito size (1 = tortilla)": {name:"Flour tortilla, burrito size (1 = tortilla)", brand:"staple", barcode:"", per100:{kcal:290,p:8.0,c:50.0,f:7.0}, serving:null, pieceG:66, source:"basic"},
+  "Seasoning mix (taco + spices)": {name:"Seasoning mix (taco + spices)", brand:"staple", barcode:"", per100:{kcal:315,p:10.0,c:60.0,f:5.0}, serving:null, pieceG:null, source:"basic"}
 };
 const PRESET_RECIPES = [{
   name: "Chicken salad (yogurt-dill)",
@@ -1074,6 +1086,19 @@ const PRESET_RECIPES = [{
     {ref:"Light mayo", grams:70},                            // ~4.5 tbsp
     {ref:"Lemon juice, fresh (1 = juice of a lemon)", grams:47},
     {ref:"Dill, fresh", grams:10}
+  ]
+},{
+  name: "Ground beef fajita burritos",
+  portions: 8,
+  cookedWeight: 0,
+  ingredients: [
+    {ref:"Ground beef 96/4, raw", grams:1361},                       // 3 lbs
+    {ref:"Mozzarella, low-moisture part-skim, shredded", grams:226}, // whole 8 oz package
+    {ref:"Bell pepper, red, raw", grams:357},                        // 3 peppers
+    {ref:"Onion, raw", grams:110},                                   // 1 onion
+    {ref:"Olive oil (1 = tbsp)", grams:56},                          // 4 tbsp
+    {ref:"Flour tortilla, burrito size (1 = tortilla)", grams:528},  // 8 tortillas
+    {ref:"Seasoning mix (taco + spices)", grams:54}                  // taco pack + 3 tbsp spices
   ]
 }];
 function presetFoodByRef(ref){
