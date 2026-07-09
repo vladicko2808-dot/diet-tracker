@@ -144,7 +144,7 @@
 <body>
 <div class="app">
   <header>
-    <h1>Diet<span>Tracker</span> <span style="font-size:11px;color:var(--muted);font-weight:400">v3.0</span></h1>
+    <h1>Diet<span>Tracker</span> <span style="font-size:11px;color:var(--muted);font-weight:400">v3.1</span></h1>
     <span class="row" style="gap:6px"><span class="pill" id="syncBadge" style="display:none"></span><span class="pill" id="goalPill"></span></span>
   </header>
 
@@ -156,6 +156,7 @@
       <button class="icon-btn" onclick="shiftDay(1)">▶</button>
     </div>
     <div id="weighBanner"></div>
+    <div id="whoopCard"></div>
     <div class="card" id="dashCard"></div>
     <div class="card">
       <h2>Quick add <span class="sub">recipes · favorites · recent</span></h2>
@@ -303,9 +304,9 @@
     </div>
     <div class="card">
       <h2>Whoop</h2>
-      <div class="whoop-box">
+      <div class="whoop-box" id="whoopBox">
         <b>Not connected yet.</b><br>
-        Once you have your Whoop, we'll register a developer app at developer.whoop.com and connect it here. Daily calorie burn will then adjust your target automatically — more food on hard days, less on rest days. Until then, targets use the activity level above.
+        Connect your Whoop and daily calorie burn will adjust your target automatically — more food on hard days, less on rest days.
       </div>
     </div>
     <div class="card">
@@ -423,7 +424,8 @@ const defaultState = () => ({
   favorites: [],    // food ids
   pantry: [],       // food ids currently "in stock" from shopping
   used: {},         // foodId -> last-used timestamp (sorts recipe chips)
-  recents: []       // [{type:'food'|'recipe', id}]
+  recents: [],      // [{type:'food'|'recipe', id}]
+  whoop: { connected:false, lastSync:0, days:{} }   // date -> {kcal,kj,strain,recovery,sleepMin,sleepPerf,complete,cycleStart}
 });
 let S = load();
 
@@ -527,14 +529,44 @@ function calibration(){
 const GOAL_ADJ = { cut:-0.175, recomp:-0.10, maintain:0, bulk:0.10 };
 const GOAL_NAME = { cut:"Losing fat", recomp:"Recomp", maintain:"Maintaining", bulk:"Building muscle" };
 
+// average Whoop burn (kcal) over the last 14 COMPLETE cycle days; null until 3+ days of data
+function whoopAvgKcal(){
+  const w = S.whoop && S.whoop.days; if(!w) return null;
+  const today = todayStr();
+  const vals = Object.entries(w)
+    .filter(([d,x]) => d !== today && x.complete && x.kcal > 0)
+    .sort((a,b) => a[0] < b[0] ? 1 : -1).slice(0,14)
+    .map(([,x]) => x.kcal);
+  if(vals.length < 3) return null;
+  return vals.reduce((a,b)=>a+b,0) / vals.length;
+}
+// Whoop burn for a date; for today's still-running cycle: live burn + typical burn for the rest of the day
+function whoopDayKcal(date){
+  const w = S.whoop && S.whoop.days; if(!w || !w[date]) return null;
+  const x = w[date], avg = whoopAvgKcal();
+  if(!(x.kcal > 0) || !avg) return null;
+  if(x.complete) return x.kcal;
+  const hrs = (Date.now() - new Date(x.cycleStart).getTime()) / 36e5;
+  const remain = Math.max(0, Math.min(1, 1 - hrs/24));
+  return x.kcal + avg*remain;
+}
+
 function targets(){
   const cal = calibration();
-  const tdee = cal.ready ? cal.estTdee : formulaTdee();
+  const wAvg = whoopAvgKcal(), wDay = whoopDayKcal(viewDate);
+  // expenditure baseline: your own calibration wins; otherwise Whoop's measured average; otherwise the formula
+  let tdee = cal.ready ? cal.estTdee : (wAvg || formulaTdee());
+  let whoopAdj = false;
+  if(wAvg && wDay){
+    // distribute the baseline across days in proportion to measured burn (clamped for sanity)
+    tdee *= Math.max(0.75, Math.min(1.35, wDay/wAvg));
+    whoopAdj = true;
+  }
   const kcal = Math.round(tdee * (1 + GOAL_ADJ[S.settings.goal]));
   const p = Math.round(latestWeight() * S.settings.proteinPerKg);
   const f = Math.round(kcal * 0.25 / 9);
   const c = Math.max(0, Math.round((kcal - p*4 - f*9) / 4));
-  return { kcal, p, c, f, tdee:Math.round(tdee), calibrated:cal.ready };
+  return { kcal, p, c, f, tdee:Math.round(tdee), calibrated:cal.ready, whoopAdj };
 }
 
 // ============ FOOD SEARCH (Open Food Facts) ============
@@ -1256,7 +1288,11 @@ function renderToday(){
     ${macroBar("p","Protein",tot.p,t.p)}
     ${macroBar("c","Carbs",tot.c,t.c)}
     ${macroBar("f","Fat",tot.f,t.f)}
-    <div class="note" style="text-align:center">${t.calibrated ? "Target from your calibrated TDEE ("+t.tdee+" kcal) ✓" : "Target from formula estimate ("+t.tdee+" kcal) — calibrates automatically after ~2 weeks of logging"}</div>`;
+    <div class="note" style="text-align:center">${
+      t.whoopAdj ? "Whoop-adjusted target — burn " + (t.calibrated ? "scaled to your calibrated TDEE ✓" : "measured by Whoop") + " (" + t.tdee + " kcal this day)"
+      : t.calibrated ? "Target from your calibrated TDEE ("+t.tdee+" kcal) ✓"
+      : "Target from formula estimate ("+t.tdee+" kcal) — calibrates automatically after ~2 weeks of logging"
+    }</div>`;
 
   // quick chips
   const chips = [];
@@ -1282,6 +1318,9 @@ function renderToday(){
       <button class="icon-btn" onclick="deleteEntry(${i})">✕</button>
     </div>`).join("")
     : '<div class="empty">Nothing logged ' + (viewDate===todayStr()?"today":"this day") + ' yet.</div>';
+
+  renderWhoopCard();
+  whoopSync();   // throttled — refreshes at most every 30 min
 }
 
 // ============ WEIGHT ============
@@ -1362,7 +1401,7 @@ function renderSettings(){
   document.getElementById("stActivity").value = String(s.activity);
   document.getElementById("stGoal").value = s.goal;
   document.getElementById("stProtein").value = Math.round(s.proteinPerKg/LB*20)/20;
-  updateGoalPill(); updateTargetPreview(); renderAccount();
+  updateGoalPill(); updateTargetPreview(); renderAccount(); renderWhoopSettings();
 }
 function saveSettings(){
   const s = S.settings;
@@ -1447,7 +1486,7 @@ function setSyncBadge(){
   el.style.display = "";
   el.textContent = !sbUser ? "no account" :
     ({syncing:"syncing…", synced:"✓ synced", error:"sync error!"}[syncState] || "…");
-  renderAccount();
+  renderAccount(); renderWhoopSettings();
 }
 function showGate(){ document.getElementById("authGate").classList.add("open"); }
 function hideGate(){ document.getElementById("authGate").classList.remove("open"); }
@@ -1470,6 +1509,8 @@ async function initSync(){
   if(sbUser){ pullRemote(); }
   else if(!localStorage.getItem("dtOfflineChoice")) showGate();
   setSyncBadge();
+  await whoopHandleRedirect();   // finish OAuth if we just came back from Whoop
+  whoopSync();
 }
 async function authLogin(){
   const email = document.getElementById("authEmail").value.trim();
@@ -1558,6 +1599,172 @@ function schedulePush(){
   syncState = "syncing"; setSyncBadge();
   clearTimeout(pushTimer);
   pushTimer = setTimeout(pushRemote, 1500);
+}
+
+// ============ WHOOP ============
+// OAuth happens via the "whoop" Supabase Edge Function so the client secret
+// stays server-side. Only the public client ID lives here.
+const WHOOP = {
+  clientId: "70a35522-2f1d-4ddc-aa9d-1f61af4c0c6a",
+  authUrl: "https://api.prod.whoop.com/oauth/oauth2/auth",
+  scope: "read:cycles read:recovery read:sleep offline",
+  fn: SYNC.url + "/functions/v1/whoop"
+};
+const whoopConfigured = () => syncConfigured() && !WHOOP.clientId.startsWith("PASTE");
+
+function whoopConnect(){
+  if(!sbUser){ toast("Sign in first — the Whoop connection is saved to your account"); return; }
+  const state = Math.random().toString(36).slice(2,10);
+  localStorage.setItem("dtWhoopState", state);
+  const u = new URL(WHOOP.authUrl);
+  u.searchParams.set("client_id", WHOOP.clientId);
+  u.searchParams.set("redirect_uri", location.origin + location.pathname);
+  u.searchParams.set("response_type", "code");
+  u.searchParams.set("scope", WHOOP.scope);
+  u.searchParams.set("state", state);
+  location.href = u.toString();
+}
+
+async function whoopCall(action, params){
+  const { data:{ session } } = await sb.auth.getSession();
+  if(!session) throw new Error("not signed in");
+  const res = await fetch(WHOOP.fn, {
+    method: "POST",
+    headers: { "Content-Type":"application/json", "Authorization":"Bearer " + session.access_token },
+    body: JSON.stringify(Object.assign({action}, params||{}))
+  });
+  const j = await res.json().catch(()=>({}));
+  if(!res.ok) throw new Error(j.error || ("whoop fn " + res.status));
+  return j;
+}
+
+async function whoopHandleRedirect(){
+  const q = new URLSearchParams(location.search);
+  if(q.get("error")){
+    history.replaceState(null, "", location.pathname);
+    toast("Whoop: access not granted");
+    return;
+  }
+  const code = q.get("code");
+  if(!code) return;
+  const okState = q.get("state") && q.get("state") === localStorage.getItem("dtWhoopState");
+  history.replaceState(null, "", location.pathname);   // clean the URL either way
+  localStorage.removeItem("dtWhoopState");
+  if(!okState){ toast("Whoop connection failed (session mismatch) — try again"); return; }
+  if(!sbUser){ toast("Sign in, then tap Connect Whoop again"); return; }
+  try{
+    toast("Connecting Whoop…");
+    await whoopCall("exchange", { code, redirect_uri: location.origin + location.pathname });
+    S.whoop = S.whoop || { connected:false, lastSync:0, days:{} };
+    S.whoop.connected = true; save();
+    toast("✓ Whoop connected");
+    renderWhoopSettings();
+    whoopSync(true);
+  }catch(e){ toast("Whoop connection failed — " + e.message); }
+}
+
+let whoopBusy = false;
+async function whoopSync(force){
+  if(!sb || !sbUser || !S.whoop || !S.whoop.connected || whoopBusy) return;
+  if(!force && Date.now() - (S.whoop.lastSync||0) < 30*60*1000) return;
+  whoopBusy = true;
+  try{
+    const data = await whoopCall("data", {
+      start: new Date(Date.now() - 28*864e5).toISOString(),
+      end: new Date(Date.now() + 864e5).toISOString()
+    });
+    // date of an instant in the cycle's own timezone
+    const localDate = (iso, off) => {
+      const m = /^([+-])(\d\d):(\d\d)/.exec(off||"");
+      const mins = m ? (m[1]==="-"?-1:1)*(+m[2]*60 + +m[3]) : 0;
+      return new Date(new Date(iso).getTime() + mins*60000).toISOString().slice(0,10);
+    };
+    const days = {}, byCycleId = {};
+    for(const c of (data.cycles||[])){
+      const d = localDate(c.start, c.timezone_offset);
+      const rec = days[d] = days[d] || {};
+      if(c.score){
+        rec.kj = c.score.kilojoule;
+        rec.kcal = Math.round(c.score.kilojoule / 4.184);
+        rec.strain = r1(c.score.strain);
+      }
+      rec.complete = !!c.end;
+      rec.cycleStart = c.start;
+      byCycleId[c.id] = d;
+    }
+    for(const r of (data.recoveries||[])){
+      const d = byCycleId[r.cycle_id];
+      if(d && r.score) days[d].recovery = Math.round(r.score.recovery_score);
+    }
+    for(const s of (data.sleeps||[])){
+      if(s.nap) continue;
+      const d = localDate(s.end, s.timezone_offset);   // sleep belongs to the day you woke up
+      if(!days[d]) continue;
+      days[d].sleepMin = Math.round((new Date(s.end) - new Date(s.start)) / 60000);
+      if(s.score && s.score.sleep_performance_percentage != null)
+        days[d].sleepPerf = Math.round(s.score.sleep_performance_percentage);
+    }
+    S.whoop.days = days;
+    S.whoop.lastSync = Date.now();
+    save();
+    renderWhoopCard(); updateGoalPill();
+    if(document.getElementById("tab-today").classList.contains("active")) renderToday();
+  }catch(e){
+    console.error("whoop sync", e);
+    if(String(e.message).includes("not connected")){
+      S.whoop.connected = false; save(); renderWhoopSettings();
+    }
+  }finally{ whoopBusy = false; }
+}
+
+async function whoopDisconnect(){
+  if(!confirm("Disconnect Whoop? Targets go back to the standard calculation.")) return;
+  try{ await whoopCall("disconnect"); }catch(e){}
+  S.whoop.connected = false; S.whoop.days = {}; save();
+  renderWhoopSettings(); renderToday(); updateGoalPill();
+  toast("Whoop disconnected");
+}
+
+function renderWhoopCard(){
+  const box = document.getElementById("whoopCard"); if(!box) return;
+  const x = S.whoop && S.whoop.days && S.whoop.days[viewDate];
+  if(!x || (!x.kcal && x.recovery==null)){ box.innerHTML = ""; return; }
+  const recCol = x.recovery==null ? "var(--muted)" :
+    x.recovery >= 67 ? "var(--accent)" : x.recovery >= 34 ? "var(--carbs)" : "var(--danger)";
+  const sleepTxt = x.sleepMin!=null ? Math.floor(x.sleepMin/60) + ":" + String(x.sleepMin%60).padStart(2,"0") : "–";
+  box.innerHTML = `<div class="card">
+    <h2>Whoop <span class="sub">${x.complete ? "" : "live · updates as the day goes"}</span></h2>
+    <div class="grid4">
+      <div class="stat"><div class="v" style="color:${recCol}">${x.recovery!=null ? x.recovery+"%" : "–"}</div><div class="k">recovery</div></div>
+      <div class="stat"><div class="v">${sleepTxt}</div><div class="k">sleep${x.sleepPerf!=null ? " · "+x.sleepPerf+"%" : ""}</div></div>
+      <div class="stat"><div class="v">${x.strain!=null ? x.strain : "–"}</div><div class="k">strain</div></div>
+      <div class="stat"><div class="v">${x.kcal ? x.kcal.toLocaleString() : "–"}</div><div class="k">${x.complete ? "kcal burned" : "kcal so far"}</div></div>
+    </div>
+  </div>`;
+}
+
+function renderWhoopSettings(){
+  const box = document.getElementById("whoopBox"); if(!box) return;
+  if(!whoopConfigured()){
+    box.innerHTML = "<b>Almost ready.</b><br>The Whoop app credentials haven't been added to this build yet.";
+    return;
+  }
+  if(S.whoop && S.whoop.connected){
+    const n = Object.keys(S.whoop.days||{}).length;
+    const last = S.whoop.lastSync ? new Date(S.whoop.lastSync).toLocaleString() : "never";
+    box.innerHTML = `<b style="color:var(--accent)">✓ Connected.</b><br>
+      Daily calorie targets follow your measured burn — more food on hard days, less on rest days.
+      <div class="note">${n} days of data · last refresh ${last}</div>
+      <div class="row" style="margin-top:10px">
+        <button class="btn small ghost" onclick="whoopSync(true).then(()=>toast('Whoop data refreshed'))">Refresh now</button>
+        <button class="btn small danger" onclick="whoopDisconnect()">Disconnect</button>
+      </div>`;
+  } else {
+    box.innerHTML = `<b>Not connected.</b><br>
+      Connect your Whoop and your daily calorie target will follow your actual measured burn.
+      ${sbUser ? "" : '<br><b>Sign in first</b> (Account &amp; sync above) — the connection is stored with your account.'}
+      <div style="margin-top:10px"><button class="btn small" ${sbUser ? "" : 'disabled style="opacity:.5"'} onclick="whoopConnect()">Connect Whoop</button></div>`;
+  }
 }
 
 // ============ CAMERA SCANNER ============
