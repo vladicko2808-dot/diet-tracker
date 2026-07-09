@@ -144,7 +144,7 @@
 <body>
 <div class="app">
   <header>
-    <h1>Diet<span>Tracker</span> <span style="font-size:11px;color:var(--muted);font-weight:400">v3.1</span></h1>
+    <h1>Diet<span>Tracker</span> <span style="font-size:11px;color:var(--muted);font-weight:400">v3.2</span></h1>
     <span class="row" style="gap:6px"><span class="pill" id="syncBadge" style="display:none"></span><span class="pill" id="goalPill"></span></span>
   </header>
 
@@ -158,6 +158,7 @@
     <div id="weighBanner"></div>
     <div id="whoopCard"></div>
     <div class="card" id="dashCard"></div>
+    <div class="card" id="planStrip"></div>
     <div class="card">
       <h2>Quick add <span class="sub">recipes · favorites · recent</span></h2>
       <div class="chips" id="quickChips"></div>
@@ -310,6 +311,10 @@
       </div>
     </div>
     <div class="card">
+      <h2>Training plan <span class="sub">shapes your carbs around soccer & lifting</span></h2>
+      <div id="planBox"></div>
+    </div>
+    <div class="card">
       <h2>Data</h2>
       <div class="row wrap">
         <button class="btn ghost" onclick="exportData()">Export backup (JSON)</button>
@@ -425,7 +430,11 @@ const defaultState = () => ({
   pantry: [],       // food ids currently "in stock" from shopping
   used: {},         // foodId -> last-used timestamp (sorts recipe chips)
   recents: [],      // [{type:'food'|'recipe', id}]
-  whoop: { connected:false, lastSync:0, days:{} }   // date -> {kcal,kj,strain,recovery,sleepMin,sleepPerf,complete,cycleStart}
+  whoop: { connected:false, lastSync:0, days:{} },  // date -> {kcal,kj,strain,recovery,sleepMin,sleepPerf,complete,cycleStart}
+  plan: {           // training planner: weekly template (0=Sun..6=Sat) + per-date overrides
+    week: {0:"game", 1:"lift", 2:"practice", 3:"lift", 4:"lift", 5:"practice", 6:"rest"},
+    overrides: {}   // date -> type
+  }
 });
 let S = load();
 
@@ -529,6 +538,77 @@ function calibration(){
 const GOAL_ADJ = { cut:-0.175, recomp:-0.10, maintain:0, bulk:0.10 };
 const GOAL_NAME = { cut:"Losing fat", recomp:"Recomp", maintain:"Maintaining", bulk:"Building muscle" };
 
+// ============ TRAINING PLAN ============
+// Day type sets the macro SPLIT only — kcal stays governed by TDEE/Whoop.
+// fat = share of kcal from fat; protein never changes; carbs take the rest.
+const PLAN_TYPES = {
+  rest:     { label:"Rest",      ico:"·",  fat:0.30, note:"Rest day — easier on carbs" },
+  lift:     { label:"Lift",      ico:"▣", fat:0.25, note:"Lift day" },
+  practice: { label:"Soccer",    ico:"◍", fat:0.23, note:"Practice day — carbs up" },
+  game:     { label:"GAME",      ico:"◎", fat:0.20, note:"Game day — carbs prioritized" },
+  carbload: { label:"Carb-load", ico:"▲", fat:0.18, note:"Game tomorrow — loading carbs" }
+};
+const PLAN_CYCLE = ["rest","lift","practice","game"];   // user-selectable types
+
+function addDaysStr(ds, n){
+  const d = new Date(ds + "T12:00:00");   // noon avoids timezone date-shift
+  d.setDate(d.getDate() + n);
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+}
+function planBase(date){
+  const p = S.plan || {};
+  if(p.overrides && p.overrides[date]) return p.overrides[date];
+  const dow = new Date(date + "T12:00:00").getDay();
+  return (p.week && p.week[dow]) || "lift";
+}
+// effective type: any non-game day right before a game becomes a carb-load day
+function planType(date){
+  const t = planBase(date);
+  if(t !== "game" && planBase(addDaysStr(date, 1)) === "game") return "carbload";
+  return t;
+}
+function cyclePlanOverride(date){
+  S.plan.overrides = S.plan.overrides || {};
+  const cur = planBase(date);
+  const next = PLAN_CYCLE[(PLAN_CYCLE.indexOf(cur) + 1) % PLAN_CYCLE.length];
+  const dow = new Date(date + "T12:00:00").getDay();
+  if(next === (S.plan.week[dow] || "lift")) delete S.plan.overrides[date];   // back to template
+  else S.plan.overrides[date] = next;
+  save(); renderPlanStrip(); renderToday();
+}
+function renderPlanStrip(){
+  const box = document.getElementById("planStrip"); if(!box) return;
+  const days = [];
+  for(let i=0;i<7;i++){
+    const d = addDaysStr(todayStr(), i);
+    const t = planType(d), meta = PLAN_TYPES[t];
+    const dw = new Date(d + "T12:00:00").toLocaleDateString(undefined, {weekday:"short"});
+    const isToday = d === todayStr();
+    const over = S.plan.overrides && S.plan.overrides[d];
+    days.push(`<button class="chip" onclick="cyclePlanOverride('${d}')"
+      style="flex:1;min-width:0;text-align:center;padding:7px 2px;${isToday?"border-color:var(--accent);":""}${t==="game"?"color:var(--carbs);font-weight:600;":""}${t==="carbload"?"color:var(--carbs);":""}"
+      title="Tap to change this day">
+      <div style="font-size:10.5px;color:var(--muted)">${dw}${over?" •":""}</div>
+      <div style="font-size:11.5px;white-space:nowrap;overflow:hidden">${meta.ico} ${meta.label}</div>
+    </button>`);
+  }
+  box.innerHTML = `<h2>This week <span class="sub">tap a day to change it · carb-load is automatic before games</span></h2>
+    <div style="display:flex;gap:5px">${days.join("")}</div>`;
+}
+function renderPlanSettings(){
+  const box = document.getElementById("planBox"); if(!box) return;
+  const order = [1,2,3,4,5,6,0];   // Mon..Sun
+  const names = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+  box.innerHTML = `<div class="grid4" style="grid-template-columns:repeat(7,1fr);gap:6px">` +
+    order.map(dow => `<div class="field" style="margin:0">
+      <label style="text-align:center">${names[dow]}</label>
+      <select style="padding:8px 4px;font-size:12.5px;text-align:center" onchange="S.plan.week[${dow}]=this.value;save();renderPlanStrip();updateTargetPreview();toast('Plan saved')">
+        ${PLAN_CYCLE.map(t=>`<option value="${t}" ${ (S.plan.week[dow]||"lift")===t?"selected":"" }>${PLAN_TYPES[t].label}</option>`).join("")}
+      </select>
+    </div>`).join("") + `</div>
+    <div class="note">Your normal week. The day before any game automatically becomes a carb-load day. One-off changes (moved game, extra session) — tap the day on the Today tab instead.</div>`;
+}
+
 // average Whoop burn (kcal) over the last 14 COMPLETE cycle days; null until 3+ days of data
 function whoopAvgKcal(){
   const w = S.whoop && S.whoop.days; if(!w) return null;
@@ -564,9 +644,10 @@ function targets(){
   }
   const kcal = Math.round(tdee * (1 + GOAL_ADJ[S.settings.goal]));
   const p = Math.round(latestWeight() * S.settings.proteinPerKg);
-  const f = Math.round(kcal * 0.25 / 9);
+  const plan = planType(viewDate);
+  const f = Math.round(kcal * PLAN_TYPES[plan].fat / 9);
   const c = Math.max(0, Math.round((kcal - p*4 - f*9) / 4));
-  return { kcal, p, c, f, tdee:Math.round(tdee), calibrated:cal.ready, whoopAdj };
+  return { kcal, p, c, f, tdee:Math.round(tdee), calibrated:cal.ready, whoopAdj, plan };
 }
 
 // ============ FOOD SEARCH (Open Food Facts) ============
@@ -1288,10 +1369,10 @@ function renderToday(){
     ${macroBar("p","Protein",tot.p,t.p)}
     ${macroBar("c","Carbs",tot.c,t.c)}
     ${macroBar("f","Fat",tot.f,t.f)}
-    <div class="note" style="text-align:center">${
+    <div class="note" style="text-align:center">${PLAN_TYPES[t.plan].ico} ${PLAN_TYPES[t.plan].note} · ${
       t.whoopAdj ? "Whoop-adjusted target — burn " + (t.calibrated ? "scaled to your calibrated TDEE ✓" : "measured by Whoop") + " (" + t.tdee + " kcal this day)"
-      : t.calibrated ? "Target from your calibrated TDEE ("+t.tdee+" kcal) ✓"
-      : "Target from formula estimate ("+t.tdee+" kcal) — calibrates automatically after ~2 weeks of logging"
+      : t.calibrated ? "target from your calibrated TDEE ("+t.tdee+" kcal) ✓"
+      : "target from formula estimate ("+t.tdee+" kcal) — calibrates automatically after ~2 weeks of logging"
     }</div>`;
 
   // quick chips
@@ -1320,6 +1401,7 @@ function renderToday(){
     : '<div class="empty">Nothing logged ' + (viewDate===todayStr()?"today":"this day") + ' yet.</div>';
 
   renderWhoopCard();
+  renderPlanStrip();
   whoopSync();   // throttled — refreshes at most every 30 min
 }
 
@@ -1401,7 +1483,7 @@ function renderSettings(){
   document.getElementById("stActivity").value = String(s.activity);
   document.getElementById("stGoal").value = s.goal;
   document.getElementById("stProtein").value = Math.round(s.proteinPerKg/LB*20)/20;
-  updateGoalPill(); updateTargetPreview(); renderAccount(); renderWhoopSettings();
+  updateGoalPill(); updateTargetPreview(); renderAccount(); renderWhoopSettings(); renderPlanSettings();
 }
 function saveSettings(){
   const s = S.settings;
